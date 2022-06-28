@@ -1,0 +1,82 @@
+---
+
+- name: hashicorp vault playbook
+  hosts: localhost
+  connection: local
+
+  vars:
+    vault_namespace: secret
+    vault_url: "http://127.0.0.1:8200"
+    role_id: 2bcec80b-6eee-59e2-8ab9-7004889ed2f8
+    secret_id: 3b96ef79-10c6-b72f-b77a-5e275d7555ef
+    secrets_path: "secret2/data/test_secret"
+    secret_var: test
+    kv_version: '2'
+
+  tasks:
+
+    - name: Login to Vault to pull access token
+      uri:
+        body_format: json
+        validate_certs: false
+        headers:
+          X-Vault-Namespace: "{{ vault_namespace }}"
+        url: "{{ vault_url }}/v1/auth/{{ auth_method | default('approle') }}/login"
+        method: POST
+        body:
+          role_id: "{{ role_id }}"
+          secret_id: "{{ secret_id }}"
+        status_code: "200"
+      register: rotoken
+
+    - name: use the access token to pull a hashicorp secret
+      uri:
+        body_format: json
+        validate_certs: false
+        headers:
+          X-Vault-Request: true
+          X-Vault-Namespace: "{{ vault_namespace }}"
+          X-Vault-Token: "{{ rotoken.json.auth.client_token }}"
+        url: "{{ vault_url}}/v1/{{ secrets_path }}"
+        method: GET
+      register: vault_contents
+
+    - name: kv version 2
+      block:
+
+        - name: set the key:secret pair
+          set_fact:
+            hashicorp_vault_dict: "{{ vault_contents.json.data.data | dict2items }}"
+
+        - name: get vaule of key
+          set_fact:
+            return_var: "{{ return_var | default({}) | combine ({ item.key : item.value }) }}"
+          loop: "{{ hashicorp_vault_dict }}"
+
+        - name: return dictionary
+          set_fact:
+            "{{ secret_var | default ({}) }}" : "{{ return_var }}"
+      when: "kv_version == '2'"
+
+    #converts returned list of dictionaries to a single combined dictionary
+    # Access vaules by "{{ secret_var }}"['key_name'], aka mydata['key_name'] when secret_var=mydata
+    - name: kv version 1
+      block:
+
+        - name: set the key:secret pair
+          set_fact:
+            hashicorp_vault_dict: "{{ vault_contents.json.data | dict2items }}"
+
+        - name: get vaule of key
+          set_fact:
+            return_var: "{{ return_var | default({}) | combine ({ item.key : item.value }) }}"
+          loop: "{{ hashicorp_vault_dict }}"
+
+        - name: return dictionary
+          set_fact:
+            "{{ secret_var | default ({}) }}" : "{{ return_var }}"
+      when: "kv_version == '1'"
+
+    - name: debug
+      debug:
+        msg: "{{ test['456'] }}"
